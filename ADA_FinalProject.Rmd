@@ -1,0 +1,434 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Import and merge data sets. 
+```{r}
+#library(Hmisc)
+
+#library(haven)
+Demo <- read_xpt("~/Documents/AdvancedDataAnalysis/demo.xpt")
+View(Demo)
+# n = 9254 participants
+# This data set reflects demographic information
+
+EnvExp <-  read_xpt("~/Documents/AdvancedDataAnalysis/PBCD_J.XPT")
+View(EnvExp)
+# n = 8366 participants
+# This data set uses laboratory measurements to test for lead, magnesium, and cadmium levels. 
+
+BP <- read_xpt("~/Documents/AdvancedDataAnalysis/BPQ_J.XPT")
+View(BP)
+# n = 6161 participants
+# This data set explores self-reported blood pressure characteristics. 
+
+Smoke <- read_xpt("/Users/erikafanous/Documents/AdvancedDataAnalysis/SMQ_J.XPT")
+View(Smoke)
+# n = 6724 participants
+
+# Data sets obtained from NHANES are SAS files (XPT).  They must be converted to Rmd when importing them into R
+# https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx?Component=Demographics&CycleBeginYear=2017 
+# NHANES: 2017-2018
+
+#DATA DOCUMENTATION 
+
+# Data documentation for Demographics Data: https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/DEMO_J.htm 
+# Data documentation for Environmental Exposure: https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/PBCD_J.htm 
+# Data documentation for Blood Pressure and Cholesterol: https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/BPQ_J.htm
+
+
+# Merge data sets by SEQN (Respondent Sequence Number).
+library(tidyverse)
+nhanes <- left_join(EnvExp, BP, by="SEQN") #first merge
+#View(nhanes)
+
+nhanes <- left_join(nhanes, Demo, by="SEQN") #second merge
+# n = 5826 participants 
+
+nhanes <- left_join(nhanes, BP, by= "SEQN") #third merge
+#View(nhanes)
+
+nhanes <- left_join(nhanes, Smoke, by= "SEQN") #fourth merge
+#View(nhanes) n = 5828 observations, of 117 variables
+
+#8366 participants
+
+class(nhanes$SMQ020)
+
+#Remove people who have not smoked more than 100 cigarettes in their lifetime
+nhanes <- nhanes %>% filter(SMQ020 > 1)
+#View(nhanes) (n=3301)
+
+# List and Rename variables
+varlist.demo <- colnames(Demo) # list of column names for demographic information
+varlist.demo
+
+varlist.env <- colnames(EnvExp) # list of column names for environmental exposure information
+varlist.env
+
+varlist.bp<- colnames(BP) # list column names for blood pressure 
+varlist.bp
+
+varlist.n<-colnames(nhanes) # list of column names for merged NHANES data set to be used for analysis
+varlist.n
+
+library(plyr)
+nhanes<-rename(nhanes, c("SEQN"="SeqRespNo", # Sequence Response Number
+                                "LBXBPB"="BloodPbConc", # Blood Lead Concentration in ug/dL
+                                "LBDBPBLC" = "BloodPbComm", # Blood Lead Comment Code, 1 = below detection                                                                 limit, will need to remove, n = 4
+                                "LBXBCD" = "BloodCadConc", # Blood Cadmium Concentration ug/L
+                                "LBDBCDLC" = "BloodCadComm", # Blood Cadmium Comment Code, 1: n = 4
+                                "LBXTHG" = "BloodHgConc", #Blood Mercury Concentration, ug/L
+                                "LBDTHGLC" = "BloodHgComm", # Blood Mercury Comment Code, 1: n = a lot
+                                "RIAGENDR" = "Gender", # Gender, 1: male, 2: female 
+                                "RIDAGEYR" = "Age", # Age at Screening
+                                "RIDRETH3" = "Race", # Race including Non-Hispanic Asian
+                                "DMDEDUC2" = "Education", # Education level above 20
+                                "INDHHIN2" = "AnnHousInc", # Annual Household Income, categorized
+                                "INDFMPIR" = "FamIncPov", # Ratio of Family Income to Poverty
+                                "BPQ020.y" = "BloodPressQ" # Ever been told high blood pressure, may need to change   
+                                 #variable name here depending on merge, but first part should be "BPQ020[...]"
+                                )) 
+
+View(nhanes) # check renaming worked
+
+# Subset data table: nhanes
+varlist <- colnames(nhanes)
+varlist
+colnames(nhanes)
+
+nhanes <- nhanes %>%
+  select("SeqRespNo", 
+         "BloodPbConc", "BloodPbComm", 
+         "BloodCadConc", "BloodCadComm",
+         "BloodHgConc", "BloodHgComm", 
+         "Gender", "Age", "Race", "Education", "AnnHousInc",
+         "BloodPressQ") %>%
+  na.omit() #omitting NA's in the data set
+# View(nhanes) 
+
+```
+
+
+Perform Data Management
+```{r}
+#UPDATE w this: #check to make sure re-classification worked
+#table(BRFSS$diabetes_binary, BRFSS$diabetes)
+
+#library(tidyverse)
+
+# Remove environmental exposures that are below lower detection limit (1).
+nhanes <- nhanes[which(nhanes$BloodPbComm=='0' 
+                              & nhanes$BloodHgComm=='0' 
+                              & nhanes$BloodCadComm=='0'),] 
+View(nhanes) # n = 2151 observations
+
+
+# Remove 7s and 9s from BP question (Refused, Don't know, respectively)
+nhanes <- nhanes[which(nhanes$BloodPressQ==1 # Yes, have been told high blood pressure
+                                | nhanes$BloodPressQ==2),] # No, have not been told high blood pressure
+View(nhanes) # n = 2148
+
+#Check if factor variable and change to factor, accordingly
+class(nhanes$BloodPressQ) # currently numeric
+nhanes$BloodPressQ<-factor(nhanes$BloodPressQ)
+class(nhanes$BloodPressQ) # check to see if changed to factor
+
+# Categorize Age
+nhanes <- nhanes %>% 
+  mutate(Age_cat = case_when(Age > 20 & Age < 35 ~ 0,
+                             Age >= 36 & Age < 55 ~ 1,
+                             Age >= 56 & Age < 150 ~ 2),
+         Age_cat = factor(Age_cat, 0:2, c("Young Adult", "Middle-Aged Adult", "Older Adult"))) #make it as a factor variable
+# Source: https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/DEMO_J.htm 
+
+# Rename Annual Household Income Categories and check variable type. 
+nhanes <- nhanes %>%
+  mutate(Inc_cat = case_when(AnnHousInc %in% c(1,2,3,4,5,13) ~ 0,
+                             AnnHousInc %in% c(6,7,8) ~ 1,
+                             AnnHousInc %in% c(9,10,14) ~ 2,
+                             AnnHousInc %in% c(15) ~ 3),
+         Inc_cat = factor(Inc_cat, 0:3, c(">25K", 
+                                          "25 to <55K", 
+                                          "55K to <100K",
+                                          ">100K"))) #make Inc_cat a factor variable
+# Source: https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/DEMO_J.htm 
+
+# Rename Race categories and check variable type. 
+nhanes <- nhanes %>% 
+  mutate(Race_cat = case_when(Race %in% (1) ~ 1,
+                              Race %in% (2) ~ 2, 
+                              Race %in% (3) ~ 0, 
+                              Race %in% (4) ~ 3,
+                              Race %in% (6) ~ 4,
+                              Race %in% (7) ~ 5),
+         Race_cat=factor(Race_cat, 0:5, c("Non-Hispanic White",
+                                          "Mexican American",
+                                            "Other Hispanic",
+                                            "Non-Hispanic Black",
+                                            "Non-Hispanic Asian",
+                                            "Other/Multiracial"))) # make Race_cat a factor variable 
+
+
+# Source: https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/DEMO_J.htm 
+
+# Categorize Education
+nhanes <- nhanes %>% 
+  mutate(Ed_cat = case_when(Education %in% (1) ~ 0,
+                              Education %in% (2) ~ 1, 
+                              Education %in% (3) ~ 2, 
+                              Education %in% (4) ~ 3,
+                              Education %in% (5) ~ 4),
+         Ed_cat = factor(Ed_cat, 0:4, c("Less than 9th grade",
+                                            "High school, no diploma",
+                                            "High school graduate or GED",
+                                            "Associates degree/some college",
+                                            "College or professional degree"
+                                            ))) # make Ed_cat a factor variable 
+View(nhanes)
+
+# Categorize Gender (no data were missing or don't know so I find that weird)
+nhanes <- nhanes %>% 
+  mutate(gender_cat = case_when(Gender %in% (1) ~ 0,
+                             Gender %in% (2) ~ 1),
+         gender_cat = factor(gender_cat, 0:1, c("Male", "Female"))) #make it as a factor variable
+View(nhanes)
+
+# Categorize Blood Pressure into "Yes" or "No"
+nhanes <- nhanes %>% 
+  mutate(BP_cat = case_when(BloodPressQ %in% (1) ~ 1,
+                             BloodPressQ %in% (2) ~ 0), # Code this as opposite/switch one and 0's #UPDATE
+        BP_cat = factor(BP_cat, 0:1, c("No Previous Hypertension Diagnosis", "Yes, Previous Hypertension Diagnosis"))) #make it as a factor variable
+
+# Categorize Cadmium toxicity
+nhanes <- nhanes %>% 
+  mutate(Cad_cat = case_when(BloodCadConc > 0 & BloodCadConc < 2.00 ~ 0,
+                             BloodCadConc >= 2.01 ~ 1),
+         Cad_cat = factor(Cad_cat, 0:1, c("Normal Blood Cd", "Elevated Blood Cd"))) #make it as a factor variable
+View(nhanes$Cad_cat)
+# https://www.mayocliniclabs.com/test-catalog/Clinical+and+Interpretive/8682#:~:text=Normal%20blood%20cadmium%20is%20%3C5.0,level%20exceeds%2050%20ng%2FmL. Normal concentrations: 2-5, above 50 is toxic (n=0), highest was 13.03 ug/L
+
+# Categorize Lead toxicity
+nhanes <- nhanes %>% 
+  mutate(Pb_cat = case_when(BloodPbConc > 0.12 & BloodPbConc < 5.00 ~ 0,
+                             BloodPbConc >= 5.00 ~ 1),
+         Pb_cat = factor(Pb_cat, 0:1, c("Normal Blood Pb", "Elevated Blood Pb"))) #make it as a factor variable
+View(nhanes$Pb_cat)
+
+# Categorize Mercury toxicity
+nhanes <- nhanes %>% 
+  mutate(Hg_cat = case_when(BloodHgConc > 0 & BloodHgConc < 10.00 ~ 0,
+                             BloodHgConc >= 10.00 ~ 1),
+         Hg_cat = factor(Hg_cat, 0:1, c("Normal Blood Hg", "Elevated Blood Hg"))) #make it as a factor variable
+View(nhanes$Hg_cat)
+
+# Subset again to only include new variables of interest
+nhanes <- nhanes %>%
+  select("SeqRespNo", 
+         "BloodPbConc", 
+         "BloodCadConc",
+         "BloodHgConc", 
+         "gender_cat", "Age_cat", "Race_cat", "Ed_cat", "Inc_cat",
+         "BP_cat", "Cad_cat", "Pb_cat", "Hg_cat") %>%
+  na.omit() #omitting NA's in the data set
+View(nhanes) #n = 3237 observations
+```
+
+Characterize Subsetted and Merged Datas
+```{r}
+dim(nhanes) # number of rows and columns (observations and variables, respectively)
+# 3237 observations, 10 variables
+
+str(nhanes) # summary of variable types
+
+summary(nhanes) #summary of variables (useful for numeric)
+
+```
+
+Table 1. Blood Pressure
+```{r}
+
+pacman::p_load(survival, survminer, tidyverse, readr, lmtest, table1)
+
+label(nhanes$Age_cat)<-"Age (years)"
+label(nhanes$gender_cat)<-"Gender"
+label(nhanes$Race_cat)<-"Race"
+label(nhanes$Inc_cat)<-"Income ($)"
+label(nhanes$Ed_cat)<-"Educational Attainment"
+label(nhanes$BP_cat)<-"Self-Reported High Blood Pressure"
+
+table1(~gender_cat + Age_cat + Race_cat + Inc_cat + Ed_cat + BloodCadConc + BloodPbConc + BloodHgConc|BP_cat, 
+       overall = "Total", rowlabelhead="Variable",footnote='SD = standard deviation', nhanes) 
+
+```
+
+Tables by Environmental Exposure. 
+```{r}
+# pacman::p_load(survival, survminer, tidyverse, readr, lmtest, table1)
+
+label(nhanes$Age_cat)<-"Age (years)"
+label(nhanes$gender_cat)<-"Gender"
+label(nhanes$Race_cat)<-"Race"
+label(nhanes$Inc_cat)<-"Income ($)"
+label(nhanes$Ed_cat)<-"Educational Attainment"
+label(nhanes$BP_cat)<-"Self-Reported High Blood Pressure"
+
+table1(~gender_cat + Age_cat + Race_cat + Inc_cat + Ed_cat + BP_cat+ BloodPbConc + BloodHgConc|Cad_cat, 
+       overall = "Total", rowlabelhead="Variable",footnote='Normal Cadmium (Cd) Blood Levels are less than 5.00 ug/L; 
+       Acute toxicity occurs at 50 ug/L (n=0)', nhanes) 
+
+# Lead
+
+label(nhanes$Age_cat)<-"Age (years)"
+label(nhanes$gender_cat)<-"Gender"
+label(nhanes$Race_cat)<-"Race"
+label(nhanes$Inc_cat)<-"Income ($)"
+label(nhanes$Ed_cat)<-"Educational Attainment"
+label(nhanes$BP_cat)<-"Self-Reported High Blood Pressure"
+
+table1(~gender_cat + Age_cat + Race_cat + Inc_cat + Ed_cat + + BP_cat + BloodCadConc + BloodHgConc|Pb_cat, 
+       overall = "Total", rowlabelhead="Variable",footnote='Normal Lead (Pb) levels are less than 10 ug/dL;  Toxicity occurs at greater than 10 ug/dL', nhanes) 
+
+#Mercury
+label(nhanes$Age_cat)<-"Age (years)"
+label(nhanes$gender_cat)<-"Gender"
+label(nhanes$Race_cat)<-"Race"
+label(nhanes$Inc_cat)<-"Income ($)"
+label(nhanes$Ed_cat)<-"Educational Attainment"
+label(nhanes$BP_cat)<-"Self-Reported High Blood Pressure"
+
+table1(~gender_cat + Age_cat + Race_cat + Inc_cat + Ed_cat + BloodCadConc + BloodPbConc + BP_cat|Hg_cat, 
+       overall = "Total", rowlabelhead="Variable",footnote='Normal Mercury (Hg) levels 10 ug/L;  Toxicity occurs at greater than 58 ug/L (n=0)', nhanes) 
+
+```
+
+
+
+**DAGs (see code below and pluf into daggity.net)**
+dag {
+bb="0,0,1,1"
+"Exposure to Cadmium" [exposure,pos="0.216,0.525"]
+"Exposure to Lead" [exposure,pos="0.216,0.798"]
+"Exposure to Mercury" [exposure,pos="0.211,0.651"]
+"Racial/Ethnic Minority" [pos="0.468,0.306"]
+"Smoking Status" [pos="0.753,0.307"]
+Hypertension [outcome,pos="0.781,0.684"]
+Poverty [pos="0.459,0.163"]
+"Exposure to Cadmium" -> Hypertension
+"Exposure to Lead" -> Hypertension
+"Exposure to Mercury" -> Hypertension
+"Racial/Ethnic Minority" -> "Exposure to Cadmium"
+"Racial/Ethnic Minority" -> "Exposure to Lead"
+"Racial/Ethnic Minority" -> "Exposure to Mercury"
+"Racial/Ethnic Minority" -> Hypertension
+"Smoking Status" -> "Exposure to Cadmium"
+"Smoking Status" -> "Exposure to Lead"
+"Smoking Status" -> Hypertension
+"Smoking Status" -> Poverty
+Poverty -> "Exposure to Cadmium"
+Poverty -> "Exposure to Lead"
+Poverty -> "Exposure to Mercury"
+Poverty -> Hypertension
+}
+
+
+Exclusion/Inclusion: Figure 1.
+```{r}
+
+#install.packages("DiagrammeR")
+#library(DiagrammeR)
+
+
+#Figure 1
+grViz("digraph flowchart {
+
+      # node definitions with substituted label text
+      node [fontname = Arial, shape = rectangle, fontsize=10] 
+      #notes indicate how many boxes you will have in your diagram. Since I have two sets of exclusions, I will have three nodes.
+      tab1 [label = '@@1']
+      tab2 [label = '@@2']
+      tab3 [label = '@@3']
+      tab4 [label = '@@4']
+      tab5 [label = '@@5']
+      tab6 [label = '@@6']
+      
+      # edge definitions with the node IDs are used to indicate how the rectangle boxes flow from each other. This is a simple flow chart but I could create branching instead as below
+      tab1 -> tab2 -> tab3 -> tab4 -> tab5 -> tab6
+}
+      #This set of code provides the text in each rectangle box.
+      [1]: 'Records received from NHANES 2017-2018 n=8366 (Demographics, Questionnaire, Laboratory)'
+      [2]: 'Excluding 5,065 individuals who smoked more than 100 cigarettes in lifetime or did not report n=3301'
+      [3]: 'Excluding 541 individuals with missing cases for selected variables (Table 1) n=2760'
+      [4]: 'Excluding 609 individuals with blood levels lower than detection limit n=2151'
+      [5]: 'Excluding 3 individuals with missing for previous hypertension diagnosis n=2148'
+      [6]: 'Excluding 314 individuals less than 18 years of age n=1834'
+      ")
+```
+
+
+Logistic Model for Environmental Exposure and Blood Pressure: Cadmium
+```{r}
+#Logistic model with environmental exposure as a predictor: Cadmium
+BPLogitCad <- glm(BP_cat ~ BloodCadConc, data=nhanes, family="binomial")
+summary(BPLogitCad)
+
+#calculate and print ORs and 95% CIs  
+ORbp<-exp(cbind(OR = coef(BPLogitCad), confint(BPLogitCad))) #calculate ORs and 95% CIs
+ORbp #print ORs and 95% CIs
+
+# Using age and annual household income as confounders:
+BPLogitConf.Cad <- glm(BP_cat ~ BloodCadConc + Inc_cat + Race_cat, data=nhanes, family="binomial")
+summary(BPLogitConf.Cad)
+
+#calculate and print ORs and 95% CIs  
+ORbp.c.cad<-exp(cbind(OR = coef(BPLogitConf.Cad), confint(BPLogitConf.Cad))) #calculate ORs and 95% CIs
+ORbp.c.cad #print ORs and 95% CIs
+
+```
+**Interpretation:** Not significant
+
+
+Logistic Model for Environmental Exposure and Blood Pressure: Mercury
+```{r}
+#Logistic model with environmental exposure as a predictor: Mercury
+BPLogit.Hg <- glm(BP_cat ~ BloodHgConc, data=nhanes, family="binomial")
+summary(BPLogit.Hg)
+
+#calculate and print ORs and 95% CIs  
+ORbp.Hg<-exp(cbind(OR = coef(BPLogit.Hg), confint(BPLogit.Hg))) #calculate ORs and 95% CIs
+ORbp.Hg #print ORs and 95% CIs
+
+# Using age and annual household income as confounders:
+BPLogitConf.Hg <- glm(BP_cat ~ BloodHgConc + Inc_cat + Race_cat, data=nhanes, family="binomial")
+summary(BPLogitConf.Hg)
+
+#calculate and print ORs and 95% CIs  
+ORbp.c.hg<-exp(cbind(OR = coef(BPLogitConf.Hg), confint(BPLogitConf.Hg))) #calculate ORs and 95% CIs
+ORbp.c.hg #print ORs and 95% CIs
+```
+**Interpretation**: Not significant
+
+
+Logistic Model for Environmental Exposure and Blood Pressure: Lead
+```{r}
+#Logistic model with environmental exposure as a predictor: Mercury
+BPLogit.Pb <- glm(BP_cat ~ BloodPbConc, data=nhanes, family="binomial")
+summary(BPLogit.Pb)
+
+#calculate and print ORs and 95% CIs  
+ORbp.Pb<-exp(cbind(OR = coef(BPLogit.Pb), confint(BPLogit.Pb))) #calculate ORs and 95% CIs
+ORbp.Pb #print ORs and 95% CIs
+
+#Interpretation of bmi OR:  for every  one unit increase in bmi the odss of diabetes increases by 1.09 times (or 9%).
+
+# Using age and annual household income as confounders:
+BPLogitConf.Pb <- glm(BP_cat ~ BloodPbConc + Inc_cat + Race_cat, data=nhanes, family="binomial")
+summary(BPLogitConf.Pb)
+
+#calculate and print ORs and 95% CIs  
+ORbp.c.pb<-exp(cbind(OR = coef(BPLogitConf.Pb), confint(BPLogitConf.Pb))) #calculate ORs and 95% CIs
+ORbp.c.pb #print ORs and 95% CIs
+```
+```
+**Interpretation:** After adjusting for race and annual household income, for every unit increase in environmental exposure (ug/L), there was a 19% increase in risk for self-reported blood pressure (1.08-1.31, p>0.001).
+
